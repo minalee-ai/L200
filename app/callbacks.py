@@ -26,6 +26,7 @@ _ROOT_PROMPT_DEFAULTS: dict[str, Any] = {
 _CHAPTER_SCOPED_TOOLS = frozenset(
     {"get_chapter_chunks", "record_progress", "update_book_companion_artifact"}
 )
+_BOOK_SCOPED_TOOLS = frozenset({"reset_book_progress", "delete_saved_book"})
 
 
 async def initialize_reader_state_callback(
@@ -89,9 +90,10 @@ async def validate_tool_inputs_callback(
         if isinstance(raw_limit, int):
             args["limit"] = max(1, min(raw_limit, MAX_SEARCH_LIMIT))
 
-    if name in _CHAPTER_SCOPED_TOOLS:
+    if name in _CHAPTER_SCOPED_TOOLS | _BOOK_SCOPED_TOOLS:
         if not str(args.get("doc_id", "")).strip():
             return {"status": "error", "message": "doc_id is required."}
+    if name in _CHAPTER_SCOPED_TOOLS:
         if not str(args.get("chapter_id", "")).strip():
             return {"status": "error", "message": "chapter_id is required."}
 

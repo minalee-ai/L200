@@ -14,17 +14,21 @@
 
 """Integration tests verifying BookCompanion agent wiring and streaming execution."""
 
+from google.adk.agents import BaseAgent
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.plugins.save_files_as_artifacts_plugin import (
     SaveFilesAsArtifactsPlugin,
 )
 from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
+from google.adk.tools import FunctionTool
 from google.adk.tools.agent_tool import AgentTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.genai import types
 
-from app.agent import app, root_agent
+from app.agent import app, root_agent, router
+from app.observability import AuditTrailPlugin
+from app.routing import ModelTier
 
 
 def test_agent_architecture_wiring() -> None:
@@ -41,6 +45,36 @@ def test_agent_architecture_wiring() -> None:
         "generate_chapter_quiz",
         "grade_quiz_answers",
     } <= agent_tool_names
+
+
+def test_observability_routing_and_confirmation_wiring() -> None:
+    """Verifies audit plugin order, tiered models, and confirmation-gated tools."""
+    assert isinstance(app.plugins[0], AuditTrailPlugin)
+    assert app.resumability_config is not None
+    assert app.resumability_config.is_resumable
+
+    gated = {
+        t.name
+        for t in root_agent.tools
+        if isinstance(t, FunctionTool) and t._require_confirmation is True
+    }
+    assert gated == {"reset_book_progress", "delete_saved_book"}
+
+    agents = {
+        sub.name: sub
+        for tool in root_agent.tools
+        if isinstance(tool, AgentTool)
+        for sub in _walk(tool.agent)
+    }
+    assert root_agent.model is router.model(ModelTier.STANDARD)
+    assert agents["narrative_summarizer"].model is router.model(ModelTier.STANDARD)
+    assert agents["quiz_drafter"].model is router.model(ModelTier.STANDARD)
+    assert agents["grounding_critic"].model is router.model(ModelTier.REASONING)
+    assert agents["quiz_grader"].model is router.model(ModelTier.FAST)
+
+
+def _walk(agent: BaseAgent) -> list[BaseAgent]:
+    return [agent, *(a for sub in agent.sub_agents for a in _walk(sub))]
 
 
 def test_agent_stream() -> None:

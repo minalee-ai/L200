@@ -34,6 +34,18 @@ A root coordinator (`book_companion`) manages reader pacing, bookshelf selection
 
 Each pipeline step that cannot continue sets `session.state["pipeline_error"]`; downstream steps skip via `before_agent_callback`, because `SequentialAgent` does not stop on `escalate`.
 
+**Task-complexity model routing (`app/routing.py`):** A `ModelRouter` assigns each agent the cheapest Gemini tier that does its job well, rather than running one model everywhere. Every tier can be overridden with `BOOK_COMPANION_<TIER>_MODEL`.
+
+| Tier | Default model | Agents |
+| :--- | :--- | :--- |
+| `FAST` | `gemini-3.5-flash-lite` | `quiz_grader` (classifies answers against a known key) |
+| `STANDARD` | `gemini-3.8-flash` | `book_companion` coordinator, `quiz_drafter`, `narrative_summarizer` |
+| `REASONING` | `gemini-3.1-pro-preview` | `grounding_critic` (final anti-hallucination gate) |
+
+The router also routes per request: a `before_model_callback` on `narrative_summarizer` sends a chapter to the `REASONING` tier when it runs past 2,500 words, and logs every routing decision.
+
+**Human-in-the-loop confirmation:** Irreversible bookshelf actions (`reset_book_progress` and `delete_saved_book`) are registered as `FunctionTool(..., require_confirmation=True)`. ADK stops the run and emits an `adk_request_confirmation` event, which ADK Web shows as an approve/reject prompt. The tool body runs only after the reader approves. `App(resumability_config=ResumabilityConfig(is_resumable=True))` lets the paused run continue from where it stopped.
+
 ```mermaid
 flowchart TD
     Reader["Reader in ADK Web UI (PDF Upload + Guided Reading)"] --> Coach["book_companion (Root LlmAgent + PreloadMemoryTool)"]
@@ -77,6 +89,8 @@ To handle long books without context overflow or repeated parsing latency, PDF i
 | `search_book_phrases` | Runs BM25 phrase and keyword retrieval (scoped to a chapter or across the full book) for `"deep dive"` questions and citation checks. |
 | `record_progress` | Records a concept the reader demonstrated (or missed) outside a check-in; quiz results are recorded by `grade_quiz_answers` itself. |
 | `update_book_companion_artifact` | Renders and saves `book_companion.html` into ADK `ArtifactService` with typography-styled chapter summaries, quotes, and progress bars. |
+| `reset_book_progress` *(needs confirmation)* | Clears a book's bookmark, mastery, and digests, but only after the reader approves. |
+| `delete_saved_book` *(needs confirmation)* | Removes a saved book and the reader's progress, but only after the reader approves. |
 
 * **Safety & State Hygiene:** A `before_tool_callback` rejects path traversal and non-PDF sources and caps `search_book_phrases` at 8 chunks; the chunker reports encrypted or image-only PDFs with clear user feedback; and quiz answer keys live only in `session.state["active_quiz_key"]`, which the root prompt never renders and only the grading pipeline reads. Chapter text and other pipeline scratch values use ADK's `temp:` state scope, so they never enter persisted session history.
 
@@ -88,6 +102,18 @@ To handle long books without context overflow or repeated parsing latency, PDF i
 ### 4. Evaluation, Observability & Tracing
 
 * **Distributed Tracing & Telemetry:** ADK's built-in OpenTelemetry instrumentation (exported to Cloud Trace via `otel_to_cloud=True` in `fast_api_app.py`) records agent delegation, loop iterations, and tool calls, so each chapter retrieval and grounding check is inspectable end-to-end.
+* **Structured JSON Logging (`app/observability.py`):** `configure_structured_logging()` sends every log record through a `JsonLogFormatter`. Each record is one line of JSON with `timestamp`, Cloud Logging `severity`, `logger`, `message`, and the active OpenTelemetry `trace_id`/`span_id`, so a log line can be joined to its Cloud Trace span.
+* **Intent vs. Outcome Audit Trail:** `AuditTrailPlugin` is registered app-wide, so `AgentTool` sub-runs inherit it too. It writes two paired events per run, keyed by `invocation_id`:
+  * `intent`: the reader's classified goal (`load_book`, `read_chapter`, `deep_dive`, `request_check_in`, `answer_check_in`, `reset_progress`, `delete_book`, …) plus the entry agent and active book.
+  * `outcome`: `status` (`success`, `awaiting_confirmation`, `rejected_by_reader`, `tool_error`, `failed`), `latency_ms`, `tools_invoked`, `models_used`, and a response preview.
+
+  It also logs a `tool_intent` and `tool_outcome` event around every tool call, and tags the active span with `book_companion.intent` and `book_companion.outcome`.
+* **PII Redaction:** `PiiRedactor` masks emails, phone numbers, SSNs, Luhn-valid card numbers, bearer tokens and API keys, sensitive dictionary keys, and home-directory paths. Redaction happens in three places:
+  * On user messages, before they reach the model or session storage.
+  * On audit payloads.
+  * In a `PiiRedactionFilter` attached to the log handler.
+
+  Logs identify users by a hashed `user_ref`, never the raw ID.
 * **Automated Quality Gate (`agents-cli eval`):** Evaluates both deterministic structural guardrails (`book_companion_guardrails` verifying `[p. X]` citations and anti-spoiler quiz formatting) and LLM-judged rubric criteria (`custom_response_quality` checking groundedness, narrative readability, and bookshelf onboarding) against fixture PDFs.
 
 ### 5. Infrastructure & CI/CD Lifecycle
@@ -101,10 +127,12 @@ To handle long books without context overflow or repeated parsing latency, PDF i
 
 ```text
 app/
-├── agent.py                  # Root book_companion Agent and ADK App
+├── agent.py                  # Root book_companion Agent and ADK App (plugins, resumability)
 ├── prompts.py                # Root and sub-agent instruction templates
 ├── callbacks.py              # Reader-state bootstrap, memory sync, before_tool_callback guardrails
 ├── tools.py                  # Typed FunctionTools (blocking work offloaded via asyncio.to_thread)
+├── routing.py                # ModelRouter: FAST / STANDARD / REASONING tiers + long-chapter escalation
+├── observability.py          # JSON logging, PII redaction, intent-vs-outcome AuditTrailPlugin
 ├── state.py                  # StateKey constants + progress-to-session-state projection
 ├── runtime.py                # Shared LibraryStore, model factory, companion HTML renderer
 ├── workflows/

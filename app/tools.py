@@ -421,3 +421,74 @@ async def update_book_companion_artifact(
         "completed_chapters": progress.completed_chapters,
         "next_chapter_id": next_chapter_id,
     }
+
+
+# --- Destructive bookshelf actions -------------------------------------------
+# Both tools are registered with `FunctionTool(require_confirmation=True)` in
+# `app/agent.py`: ADK pauses the run and asks the reader to approve before the
+# function body executes, so these bodies only run after explicit consent.
+
+
+async def reset_book_progress(doc_id: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Erases the reader's bookmark, mastery scores, and chapter digests for one book.
+
+    Requires the reader's explicit confirmation before it runs. Use only when the
+    reader asks to start a book over.
+
+    Args:
+        doc_id: Identifier of the saved book to reset.
+
+    Returns:
+        Dictionary confirming the reset and the new bookmark chapter.
+    """
+    store = get_library_store()
+    try:
+        toc = await asyncio.to_thread(store.load_toc, doc_id)
+    except FileNotFoundError as err:
+        return _error(str(err))
+
+    progress = await asyncio.to_thread(store.reset_progress, tool_context.user_id, toc)
+    if tool_context.state.get(StateKey.ACTIVE_BOOK_ID) == doc_id:
+        tool_context.state.update({StateKey.ACTIVE_CHAPTER_ID: "", **QUIZ_RESET_DELTA})
+    _publish_reader_state(tool_context, toc, progress)
+    await _save_companion_html_artifact(tool_context, toc, progress)
+    return {
+        "status": "success",
+        "doc_id": doc_id,
+        "title": toc.title,
+        "bookmark_chapter_id": progress.bookmark_chapter_id,
+    }
+
+
+async def delete_saved_book(doc_id: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Permanently removes a saved book and the reader's progress from the bookshelf.
+
+    Requires the reader's explicit confirmation before it runs. Use only when the
+    reader asks to delete or remove a book.
+
+    Args:
+        doc_id: Identifier of the saved book to delete.
+
+    Returns:
+        Dictionary confirming the deletion and the remaining bookshelf.
+    """
+    store = get_library_store()
+    user_id = tool_context.user_id
+    deleted = await asyncio.to_thread(store.delete_book, user_id, doc_id)
+    if not deleted:
+        return _error(f"Book '{doc_id}' was not found in the saved library.")
+
+    bookshelf = await asyncio.to_thread(store.list_books, user_id)
+    tool_context.state[StateKey.SAVED_BOOKSHELF_OVERVIEW] = bookshelf
+    if tool_context.state.get(StateKey.ACTIVE_BOOK_ID) == doc_id:
+        tool_context.state.update(
+            {
+                StateKey.ACTIVE_BOOK_ID: "",
+                StateKey.ACTIVE_BOOK_TITLE: "",
+                StateKey.ACTIVE_CHAPTER_ID: "",
+                StateKey.BOOKMARK_CHAPTER_ID: "",
+                StateKey.DOC_TOC: [],
+                **QUIZ_RESET_DELTA,
+            }
+        )
+    return {"status": "success", "deleted_doc_id": doc_id, "remaining_books": bookshelf}

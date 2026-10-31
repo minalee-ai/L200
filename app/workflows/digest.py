@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from google.adk.agents import Agent, SequentialAgent
-from google.adk.models import BaseLlm
 
 from app import prompts
+from app.routing import ModelRouter, ModelTier
 from app.state import StateKey
 from app.workflows.steps import (
     ChapterChunkLoaderAgent,
@@ -15,16 +15,18 @@ from app.workflows.steps import (
 )
 
 
-def create_chapter_digest_pipeline(model: str | BaseLlm) -> SequentialAgent:
+def create_chapter_digest_pipeline(router: ModelRouter) -> SequentialAgent:
     """Creates the `summarize_chapter` pipeline exposed to the root agent as a tool."""
     summarizer = Agent(
         name="narrative_summarizer",
-        model=model,
+        # Standard tier by default; long chapters are escalated per request.
+        model=router.model(ModelTier.STANDARD),
         include_contents="none",
         output_key=StateKey.LATEST_CHAPTER_DIGEST,
         description="Composes an engaging abridged-book chapter digest with page citations.",
         instruction=prompts.NARRATIVE_SUMMARIZER_INSTRUCTION,
         before_agent_callback=skip_silently_if_pipeline_error,
+        before_model_callback=router.escalate_long_chapters,
     )
 
     return SequentialAgent(

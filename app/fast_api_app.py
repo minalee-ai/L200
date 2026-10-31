@@ -24,9 +24,12 @@ from google.adk.runners import Runner
 
 from app.app_utils import services
 from app.app_utils.a2a import attach_a2a_routes
+from app.observability import configure_structured_logging
 
 AGENT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(AGENT_DIR, ".env"))
+# JSON + PII-redacted logs from process start, before the agent is imported.
+configure_structured_logging()
 allow_origins = (
     os.getenv("ALLOW_ORIGINS", "").split(",") if os.getenv("ALLOW_ORIGINS") else None
 )

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from google.adk.agents import Agent, LoopAgent, SequentialAgent
-from google.adk.models import BaseLlm
 
 from app import prompts
 from app.library.models import GroundingReview, QuizGradeReport, QuizSetDraft
+from app.routing import ModelRouter, ModelTier
 from app.state import StateKey
 from app.workflows.steps import (
     ChapterChunkLoaderAgent,
@@ -21,11 +21,15 @@ from app.workflows.steps import (
 _MAX_QUIZ_DRAFT_ATTEMPTS = 2
 
 
-def create_quiz_verification_pipeline(model: str | BaseLlm) -> SequentialAgent:
-    """Creates the `generate_chapter_quiz` pipeline (drafter-critic loop + formatter)."""
+def create_quiz_verification_pipeline(router: ModelRouter) -> SequentialAgent:
+    """Creates the `generate_chapter_quiz` pipeline (drafter-critic loop + formatter).
+
+    The critic runs on the reasoning tier: it is the last line of defense
+    against ungrounded quotes and answer leaks, so it gets the strongest model.
+    """
     drafter = Agent(
         name="quiz_drafter",
-        model=model,
+        model=router.model(ModelTier.STANDARD),
         include_contents="none",
         output_schema=QuizSetDraft,
         output_key=StateKey.QUIZ_DRAFT,
@@ -35,7 +39,7 @@ def create_quiz_verification_pipeline(model: str | BaseLlm) -> SequentialAgent:
 
     critic = Agent(
         name="grounding_critic",
-        model=model,
+        model=router.model(ModelTier.REASONING),
         include_contents="none",
         output_schema=GroundingReview,
         output_key=StateKey.QUIZ_GROUNDING_FEEDBACK,
@@ -74,15 +78,16 @@ def create_quiz_verification_pipeline(model: str | BaseLlm) -> SequentialAgent:
     )
 
 
-def create_quiz_grading_pipeline(model: str | BaseLlm) -> SequentialAgent:
+def create_quiz_grading_pipeline(router: ModelRouter) -> SequentialAgent:
     """Creates the `grade_quiz_answers` pipeline, which reads the hidden answer key.
 
     Grading happens here so the root agent never holds the answer key before the
-    reader has answered.
+    reader has answered. Comparing two short answers against a key is a
+    classification task, so the grader runs on the fast tier.
     """
     grader = Agent(
         name="quiz_grader",
-        model=model,
+        model=router.model(ModelTier.FAST),
         include_contents="none",
         output_schema=QuizGradeReport,
         output_key=StateKey.QUIZ_GRADE_REPORT,

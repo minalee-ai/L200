@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import tempfile
 import threading
 from collections.abc import Callable, Sequence
@@ -163,6 +164,36 @@ class LibraryStore:
             result = mutate(progress)
             self.save_progress(user_id, progress)
         return progress, result
+
+    def reset_progress(self, user_id: str, toc: BookToc) -> BookProgress:
+        """Replaces a reader's progress with a fresh bookmark at the first chapter.
+
+        Destructive: clears completed chapters, mastery, and saved digests.
+        """
+        progress = BookProgress.new(toc)
+        self.save_progress(user_id, progress)
+        return progress
+
+    def delete_book(self, user_id: str, doc_id: str) -> bool:
+        """Removes a cached book and this reader's progress for it.
+
+        Destructive and irreversible. Other readers' progress files are kept so
+        re-uploading the same PDF restores their bookmarks.
+
+        Returns:
+            True if the book existed and was removed.
+        """
+        book_dir = self._book_dir(doc_id)
+        if not book_dir.is_dir():
+            return False
+        with self._progress_lock:
+            self._progress_path(user_id, doc_id).unlink(missing_ok=True)
+        # toc.json first: it is the marker list_books() and has_book() rely on,
+        # so a crash mid-delete never leaves a half-listed book.
+        for name in ("toc.json", "chunks.json"):
+            (book_dir / name).unlink(missing_ok=True)
+        shutil.rmtree(book_dir, ignore_errors=True)
+        return True
 
     def list_books(self, user_id: str) -> list[dict[str, Any]]:
         """Lists cached books with this reader's bookmark and mastery (read-only)."""

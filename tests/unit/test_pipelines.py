@@ -17,6 +17,7 @@ from pydantic import Field
 from app.library.chunker import HierarchicalPdfChunker
 from app.library.models import BookToc, QuizQuestionDraft, QuizSetDraft
 from app.library.store import LibraryStore
+from app.routing import ModelRouter
 from app.runtime import COMPANION_ARTIFACT_FILENAME
 from app.state import StateKey
 from app.workflows import (
@@ -147,7 +148,9 @@ async def test_digest_pipeline_stops_when_no_book_is_loaded(
     session = await harness.new_session()
 
     texts = await harness.run(
-        create_chapter_digest_pipeline(llm), session, "Summarize ch01"
+        create_chapter_digest_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "Summarize ch01",
     )
 
     assert llm.calls == [], "summarizer must not run without source material"
@@ -161,7 +164,9 @@ async def test_digest_pipeline_rejects_unknown_chapter(seeded_book: BookToc) -> 
     session = await harness.new_session({StateKey.ACTIVE_BOOK_ID: seeded_book.doc_id})
 
     texts = await harness.run(
-        create_chapter_digest_pipeline(llm), session, "Summarize ch99"
+        create_chapter_digest_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "Summarize ch99",
     )
 
     assert llm.calls == []
@@ -169,7 +174,9 @@ async def test_digest_pipeline_rejects_unknown_chapter(seeded_book: BookToc) -> 
     assert "ch01, ch02, ch03" in texts[-1]
 
     quiz_texts = await harness.run(
-        create_quiz_verification_pipeline(llm), session, "check-in for ch99"
+        create_quiz_verification_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "check-in for ch99",
     )
     assert llm.calls == []
     assert len(quiz_texts) == 1, "loop and formatter must not both re-emit the error"
@@ -192,7 +199,11 @@ async def test_check_in_after_reading_targets_the_chapter_just_read(
     harness = _Harness()
     session = await harness.new_session({StateKey.ACTIVE_BOOK_ID: seeded_book.doc_id})
 
-    await harness.run(create_chapter_digest_pipeline(llm), session, "Summarize ch01")
+    await harness.run(
+        create_chapter_digest_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "Summarize ch01",
+    )
 
     state = await harness.state(session)
     assert state[StateKey.ACTIVE_CHAPTER_ID] == "ch01"
@@ -208,7 +219,7 @@ async def test_check_in_after_reading_targets_the_chapter_just_read(
 
     # A bare "check-in" must quiz the chapter just read, not the bookmark (ch02).
     texts = await harness.run(
-        create_quiz_verification_pipeline(llm), session, "check-in"
+        create_quiz_verification_pipeline(ModelRouter.uniform(llm)), session, "check-in"
     )
 
     drafter_instruction = llm.instructions[llm.calls.index("QuizSetDraft")]
@@ -234,7 +245,9 @@ async def test_quiz_pipeline_withholds_quiz_that_never_passes_grounding(
     session = await harness.new_session({StateKey.ACTIVE_BOOK_ID: seeded_book.doc_id})
 
     texts = await harness.run(
-        create_quiz_verification_pipeline(llm), session, "check-in for ch01"
+        create_quiz_verification_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "check-in for ch01",
     )
 
     assert llm.calls == ["QuizSetDraft", "GroundingReview"] * 2
@@ -253,7 +266,9 @@ async def test_grading_pipeline_requires_a_pending_quiz(
     harness = _Harness()
     session = await harness.new_session()
 
-    texts = await harness.run(create_quiz_grading_pipeline(llm), session, "1) majority")
+    texts = await harness.run(
+        create_quiz_grading_pipeline(ModelRouter.uniform(llm)), session, "1) majority"
+    )
 
     assert llm.calls == []
     assert "no check-in quiz awaiting answers" in texts[-1]
@@ -275,7 +290,9 @@ async def test_grading_pipeline_fails_loudly_when_quiz_book_is_gone(
     )
 
     texts = await harness.run(
-        create_quiz_grading_pipeline(llm), session, "B) Strict majority"
+        create_quiz_grading_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "B) Strict majority",
     )
 
     assert llm.calls == [], "grader must not run when results cannot be recorded"
@@ -304,7 +321,7 @@ async def test_grading_pipeline_records_mastery_and_closes_quiz(
     )
 
     texts = await harness.run(
-        create_quiz_grading_pipeline(llm),
+        create_quiz_grading_pipeline(ModelRouter.uniform(llm)),
         session,
         "They all apply the same commands in the same order.",
     )
@@ -339,7 +356,7 @@ async def test_digest_pipeline_survives_missing_artifact_service(
     session = await harness.new_session({StateKey.ACTIVE_BOOK_ID: seeded_book.doc_id})
 
     await harness.run(
-        create_chapter_digest_pipeline(llm),
+        create_chapter_digest_pipeline(ModelRouter.uniform(llm)),
         session,
         "Summarize ch01",
         with_artifacts=False,
@@ -363,7 +380,11 @@ async def test_new_digest_retires_pending_quiz_and_keeps_scratch_out_of_session(
         }
     )
 
-    await harness.run(create_chapter_digest_pipeline(llm), session, "Summarize ch02")
+    await harness.run(
+        create_chapter_digest_pipeline(ModelRouter.uniform(llm)),
+        session,
+        "Summarize ch02",
+    )
 
     state = await harness.state(session)
     assert state[StateKey.ACTIVE_QUIZ_KEY] == {}
