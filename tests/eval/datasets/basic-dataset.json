@@ -1,0 +1,67 @@
+{
+  "eval_cases": [
+    {
+      "eval_case_id": "onboarding_bookshelf",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Hello! What can you help me do as a reading companion?"
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Introduces BookCompanion as an interactive summarized-book reading companion that turns uploaded PDF books, articles, and papers into chapter-by-chapter narrative digests with page citations, deep-dive phrase search, and grounded check-in quizzes, and invites the reader to upload or share a PDF."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "chapter_digest_with_citations",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Please load tests/eval/fixtures/distributed_systems_field_guide.pdf and give me the abridged chapter summary for ch01."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Loads Distributed Systems Field Guide and presents an engaging narrative digest of Chapter 1 (Foundations of Distributed Consensus) covering state machine replication, safety vs. liveness, and the FLP impossibility theorem, grounded with [p. 1] citations and a reading navigation prompt."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eval_case_id": "grounded_quiz_no_spoilers",
+      "prompt": {
+        "role": "user",
+        "parts": [
+          {
+            "text": "Please load tests/eval/fixtures/distributed_systems_field_guide.pdf and give me a check-in quiz for ch02."
+          }
+        ]
+      },
+      "reference": {
+        "response": {
+          "role": "model",
+          "parts": [
+            {
+              "text": "Loads Distributed Systems Field Guide and presents a 2-question check-in quiz for Chapter 2 (Leader Election and Quorum Leases) covering Raft subproblems, randomized election timeouts, majority quorums, or heartbeats, without revealing the answer key or spoilers before the reader answers."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

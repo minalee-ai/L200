@@ -1,0 +1,29 @@
+# Added by setup_argolis
+.venv
+.git
+.env
+.terraform/
+*.tfstate*
+
+# Python / build / caches
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ty/
+.coverage
+.coverage.*
+
+# ADK & BookCompanion local artifacts
+.adk/
+.google-agents-cli/
+.library_store/
+artifacts/
+*.pem
+*-key.json
+credentials*.json

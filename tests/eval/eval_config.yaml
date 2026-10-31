@@ -1,0 +1,55 @@
+metrics_to_run:
+  - custom_response_quality
+  - book_companion_guardrails
+
+custom_metrics:
+  # Local LLM-as-judge (see response_quality.py). Runs in-process via google-genai.
+  - name: custom_response_quality
+    custom_function_file: response_quality.py
+
+  # Deterministic structural check for citation formatting and anti-spoiler quiz rules.
+  - name: book_companion_guardrails
+    custom_function: |
+      import re
+
+      def _text(val):
+          if isinstance(val, str):
+              return val
+          if isinstance(val, dict):
+              if "response" in val:
+                  return _text(val["response"])
+              parts = val.get("parts") or []
+              return "\n".join(
+                  p.get("text", "") for p in parts if isinstance(p, dict) and p.get("text")
+              )
+          return str(val or "")
+
+      def evaluate(instance):
+          prompt = _text(instance.get("prompt")).lower()
+          response = _text(instance.get("response"))
+          if not response.strip():
+              return {"score": 0.0, "explanation": "Empty final response."}
+
+          if "abridged chapter summary" in prompt or "summarize" in prompt:
+              has_citation = bool(re.search(r"\[p\.\s*\d+", response))
+              if not has_citation:
+                  return {"score": 0.0, "explanation": "Chapter summary missing [p. X] page citation."}
+
+          if "check-in quiz" in prompt:
+              lowered = response.lower()
+              leaked = any(
+                  phrase in lowered
+                  for phrase in (
+                      "correct_answer",
+                      "supporting_quote",
+                      "answer key:",
+                      "correct answer:",
+                  )
+              )
+              if leaked:
+                  return {"score": 0.0, "explanation": "Quiz leaked spoiler answer key."}
+              has_questions = bool(re.search(r"question\s*1", response, re.IGNORECASE))
+              if not has_questions:
+                  return {"score": 0.0, "explanation": "Quiz missing structured questions."}
+
+          return {"score": 1.0, "explanation": "All structural reading-companion checks passed."}
